@@ -15,6 +15,7 @@ from sentence_transformers import SentenceTransformer
 from sklearn.feature_extraction.text import TfidfVectorizer
 import faiss
 import streamlit as st
+import plotly.graph_objects as go
 
 # =========================================================
 # 1. DATA LOADING & NORMALIZATION (Cell 3 & 17)
@@ -66,8 +67,16 @@ def get_stopwords():
     factory = StopWordRemoverFactory()
     stop_words = set(factory.get_stop_words())
     custom_stops = {
-        "atas","mohon","terkait","tentang","pajak","wajib","wp","coretax",
-        "bantuannya","terima","kasih","bagaimana","apakah","bisa","akan","tersebut","nya"
+    "atas","bawah","mohon","terkait","tentang","untuk",
+    "dengan","dan","atau","yang","di","ke","dari",
+    "saya","aku","kami","kita","ini","itu","adalah",
+    "pada","dalam","sebagai","agar","bisa","akan",
+    "selamat","pagi","siang","sore","namun",
+    "tolong","silakan","please","help","problem","issue",
+    "pajak","wajib","wp","coretax","bantuannya","melati",
+    "lanjut","request","case","data","masa",
+    "tersebut","nomor","kasus","muncul","terima","kasih",
+    "bagaimana","apakah","nya"
     }
     return stop_words.union(custom_stops)
 
@@ -85,7 +94,11 @@ def clean_text(text, stopwords_id):
     text = re.sub(r"\s+", " ", text).strip()
     
     # Slang & Stopwords
-    slang_dict = {"gk": "tidak", "ga": "tidak", "yg": "yang", "dgn": "dengan"}
+    slang_dict = {"gk": "tidak","ga": "tidak","nggak": "tidak",
+    "bgt": "banget","yg": "yang","dgn": "dengan",
+    "dr": "dari","tdk": "tidak","eror": "error",
+    "errorr": "error","instal": "install","installl": "install",
+    "piip": "pip"}
     words = [slang_dict.get(w, w) for w in text.split()]
     words = [w for w in words if w not in stopwords_id and len(w) > 1]
     
@@ -175,7 +188,6 @@ def generate_wordcloud(df, column_name):
 # =========================================================
 # 7. TAMBAHAN UNTUK TAB 4 FITUR PENCARIAN TIKET SERUPA
 # =========================================================
-import faiss
 
 # Di dalam processor.py
 def build_faiss_index(embeddings):
@@ -197,3 +209,202 @@ def search_semantic(query, _model, index, original_df, top_k=10):
     results = original_df.iloc[indices[0]].copy()
     results['similarity_score'] = distances[0]
     return results
+
+
+
+# ... (kode existing Anda) ...
+
+def generate_sankey_plot(df, text_column="cleaned_text", top_clusters=15, threshold=0.70):
+    # 1. Penyiapan Data (Limit untuk performa agar tidak lag di Streamlit)
+    sample_df = df.head(1000) # Batasi 1000 baris pertama untuk kestabilan plot
+    sample_texts = sample_df[text_column].tolist()
+    
+    # Load model & hitung embedding
+    model = load_embedding_model()
+    sample_emb = perform_embedding(sample_texts, model)
+
+    # 2. Simple Clustering Logic (dari file sankey1.txt)
+    def simple_cluster(texts, embeddings, threshold):
+        clusters = []
+        used = set()
+        for i in range(len(texts)):
+            if i in used: continue
+            group = [i]
+            used.add(i)
+            for j in range(len(texts)):
+                if j not in used:
+                    sim = np.dot(embeddings[i], embeddings[j])
+                    if sim >= threshold:
+                        group.append(j)
+                        used.add(j)
+            clusters.append(group)
+        return clusters
+
+    clusters = simple_cluster(sample_texts, sample_emb, threshold)
+    clusters = [c for c in clusters if len(c) > 2] # Filter noise
+    clusters = sorted(clusters, key=len, reverse=True)[:top_clusters] # Top clusters
+
+    # 3. TF-IDF untuk Label
+    vectorizer = TfidfVectorizer(max_features=1000)
+    vectorizer.fit(sample_texts)
+    feature_names = np.array(vectorizer.get_feature_names_out())
+
+    def get_cluster_label(texts_cluster):
+        if not texts_cluster: return "unknown"
+        tfidf = vectorizer.transform(texts_cluster)
+        mean_scores = tfidf.mean(axis=0).A1
+        top_idx = mean_scores.argsort()[-1]
+        return feature_names[top_idx]
+
+    # 4. Build Sankey Structure
+    labels = []
+    label_map = {}
+    source, target, value = [], [], []
+
+    for i, cluster in enumerate(clusters):
+        cluster_texts = [sample_texts[idx] for idx in cluster]
+        cluster_label = f"Topic: {get_cluster_label(cluster_texts)}"
+
+        if cluster_label not in label_map:
+            label_map[cluster_label] = len(labels)
+            labels.append(cluster_label)
+        
+        cluster_id = label_map[cluster_label]
+
+        for idx in cluster[:3]: # Ambil 3 contoh per klaster agar tidak terlalu penuh
+            text_label = (sample_texts[idx][:30] + '...') if len(sample_texts[idx]) > 30 else sample_texts[idx]
+            if text_label not in label_map:
+                label_map[text_label] = len(labels)
+                labels.append(text_label)
+            
+            source.append(cluster_id)
+            target.append(label_map[text_label])
+            value.append(1)
+
+    # 5. Create Figure
+    fig = go.Figure(data=[go.Sankey(
+        node=dict(pad=15, thickness=20, line=dict(color="black", width=0.5), label=labels),
+        link=dict(source=source, target=target, value=value)
+    )])
+    
+    fig.update_layout(title_text="Sankey MVP (Semantic Topic Flow)", font_size=12)
+    return fig
+
+
+# Fungsi Helper untuk Clustering (Shared logic)
+def get_clusters_and_vectorizer(df, text_column, threshold=0.70):
+    sample_texts = df[text_column].head(2000).tolist() # Limit 2000
+    model = load_embedding_model()
+    sample_emb = perform_embedding(sample_texts, model)
+    
+    def simple_cluster(texts, embeddings, threshold):
+        clusters, used = [], set()
+        for i in range(len(texts)):
+            if i in used: continue
+            group = [i]; used.add(i)
+            for j in range(len(texts)):
+                if j not in used:
+                    sim = np.dot(embeddings[i], embeddings[j])
+                    if sim >= threshold:
+                        group.append(j); used.add(j)
+            clusters.append(group)
+        return clusters
+
+    clusters = simple_cluster(sample_texts, sample_emb, threshold)
+    clusters = sorted([c for c in clusters if len(c) > 2], key=len, reverse=True)[:15]
+    
+    vectorizer = TfidfVectorizer(max_features=1000)
+    vectorizer.fit(sample_texts)
+    
+    return sample_texts, clusters, vectorizer
+
+# 1. Sankey 3-Layer (Cluster -> Mediator -> Text)
+def plot_sankey_3layer(df, text_column="cleaned_text"):
+    texts, clusters, vec = get_clusters_and_vectorizer(df, text_column)
+    feature_names = np.array(vec.get_feature_names_out())
+    labels, label_map, source, target, value = [], {}, [], [], []
+
+    for i, cluster in enumerate(clusters):
+        cluster_name = f"Cluster_{i}"
+        if cluster_name not in label_map:
+            label_map[cluster_name] = len(labels); labels.append(cluster_name)
+        
+        # Mediator Keywords
+        tfidf = vec.transform([texts[idx] for idx in cluster])
+        keywords = feature_names[tfidf.mean(axis=0).A1.argsort()[-2:][::-1]]
+        
+        for kw in keywords:
+            if kw not in label_map: label_map[kw] = len(labels); labels.append(kw)
+            source.append(label_map[cluster_name]); target.append(label_map[kw]); value.append(len(cluster))
+            
+            for idx in cluster[:3]:
+                txt = texts[idx][:40]
+                if txt not in label_map: label_map[txt] = len(labels); labels.append(txt)
+                source.append(label_map[kw]); target.append(label_map[txt]); value.append(1)
+
+    fig = go.Figure(data=[go.Sankey(node=dict(label=labels, pad=15, thickness=18), 
+                                  link=dict(source=source, target=target, value=value))])
+    fig.update_layout(title="Sankey 3-Layer (Cluster → Mediator → Text)", font_size=10)
+    return fig
+
+# 2. Sankey MVP (Semantic Topic -> Keyword -> Text)
+def plot_sankey_semantic(df, text_column="cleaned_text"):
+    texts, clusters, vec = get_clusters_and_vectorizer(df, text_column)
+    feature_names = np.array(vec.get_feature_names_out())
+    labels, label_map, source, target, value = [], {}, [], [], []
+
+    for cluster in clusters:
+        cluster_texts = [texts[i] for i in cluster]
+        tfidf_res = vec.transform(cluster_texts).mean(axis=0).A1
+        topic_label = feature_names[tfidf_res.argmax()] # Semantic Topic[cite: 5]
+
+        if topic_label not in label_map:
+            label_map[topic_label] = len(labels); labels.append(topic_label)
+        
+        keywords = feature_names[tfidf_res.argsort()[-2:][::-1]]
+        for kw in keywords:
+            if kw not in label_map: label_map[kw] = len(labels); labels.append(kw)
+            source.append(label_map[topic_label]); target.append(label_map[kw]); value.append(len(cluster))
+            
+            for idx in cluster[:3]:
+                txt = texts[idx][:40]
+                if txt not in label_map: label_map[txt] = len(labels); labels.append(txt)
+                source.append(label_map[kw]); target.append(label_map[txt]); value.append(1)
+
+    fig = go.Figure(data=[go.Sankey(node=dict(label=labels, pad=15, thickness=18), 
+                                  link=dict(source=source, target=target, value=value))])
+    fig.update_layout(title="Sankey MVP (Semantic Topic → Keyword → Text)", font_size=10)
+    return fig
+
+# 3. Sankey MVP (Clean + Top-N Right Layer)
+def plot_sankey_topn(df, text_column="cleaned_text"):
+    texts, clusters, vec = get_clusters_and_vectorizer(df, text_column)
+    feature_names = np.array(vec.get_feature_names_out())
+    labels, label_map, source, target, value = [], {}, [], [], []
+
+    for cluster in clusters:
+        cluster_texts = [texts[i] for i in cluster]
+        tfidf_matrix = vec.transform(cluster_texts)
+        tfidf_res = tfidf_matrix.mean(axis=0).A1
+        topic_label = feature_names[tfidf_res.argmax()]
+        
+        if topic_label not in label_map:
+            label_map[topic_label] = len(labels); labels.append(topic_label)
+        
+        keywords = feature_names[tfidf_res.argsort()[-2:][::-1]]
+        for kw in keywords:
+            if kw not in label_map: label_map[kw] = len(labels); labels.append(kw)
+            source.append(label_map[topic_label]); target.append(label_map[kw]); value.append(len(cluster))
+            
+            # TOP-N Right Layer logic[cite: 6]
+            row_sums = tfidf_matrix.toarray().sum(axis=1)
+            top_idx = np.argsort(row_sums)[-2:] # TOP_K_TEXT = 2
+            for i in top_idx:
+                txt = cluster_texts[i][:40]
+                if txt not in label_map: label_map[txt] = len(labels); labels.append(txt)
+                source.append(label_map[kw]); target.append(label_map[txt]); value.append(1)
+
+    fig = go.Figure(data=[go.Sankey(node=dict(label=labels, pad=15, thickness=18), 
+                                  link=dict(source=source, target=target, value=value))])
+    fig.update_layout(title="Sankey MVP (Clean + Top-N Right Layer)", font_size=10)
+    return fig

@@ -12,7 +12,11 @@ from processor import (
     get_quadrant_data,
     generate_wordcloud,
     build_faiss_index,
-    search_semantic
+    generate_sankey_plot,
+    search_semantic,
+    plot_sankey_3layer,
+    plot_sankey_semantic,
+    plot_sankey_topn
 )
 
 # Konfigurasi Halaman
@@ -103,11 +107,12 @@ elif page == "📊 Dashboard Analisis":
                 df["issue_category"] = df["cleaned_text"].apply(classify_issue)
 
             # --- DASHBOARD TABS ---
-            tab1, tab2, tab3, tab4 = st.tabs([
+            tab1, tab2, tab3, tab4, tab5 = st.tabs([
                 "📊 Statistik Deskriptif", 
                 "🔍 Analisis Isu & Klaster", 
                 "⏱️ Resolusi Waktu",
-                "🔍 Pencarian Tiket Serupa (FAISS)"
+                "🔍 Pencarian Tiket (FAISS)",
+                "🌊 Semantic Flow (Sankey)"
             ])
 
             with tab1:
@@ -174,6 +179,42 @@ elif page == "📊 Dashboard Analisis":
                         with st.expander(f"Hasil {i+1}: {row['question_title']} (Skor: {row['similarity_score']:.2f})"):
                             st.write(row['question'])
                             st.caption(f"Kategori: {row['parent1']}")
+
+            with tab5:
+                st.header("🌊 Advanced Semantic Flow Analysis")
+                st.info("Visualisasi ini memetakan aliran kata kunci dominan ke contoh-contoh teks spesifik menggunakan algoritma clustering.")
+                
+                # Selector untuk jenis fitur
+                sankey_type = st.radio(
+                    "Pilih Visualisasi Sankey:",
+                    [
+                        "1. Sankey MVP (Semantic Topic Flow)",
+                        "2. Sankey 3-Layer (Cluster → Mediator → Text)",
+                        "3. Sankey MVP (Semantic Topic → Keyword → Text)",
+                        "4. Sankey MVP (Clean + Top-N Right Layer)"
+                    ],
+                    horizontal=True
+                )
+                st.divider()
+
+                with st.spinner("Sedang memproses algoritma clustering dan membangun visualisasi..."):
+                    try:
+                        if "1." in sankey_type:
+                            fig= generate_sankey_plot(df)
+                        elif "2." in sankey_type:
+                            fig = plot_sankey_3layer(df)
+                        elif "3." in sankey_type:
+                            fig = plot_sankey_semantic(df)
+                        else:
+                            fig = plot_sankey_topn(df)
+                            
+                        st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Penjelasan dinamis berdasarkan pilihan
+                        if "3." in sankey_type:
+                            st.info("💡 Mode ini hanya menampilkan 2 teks paling relevan (skor TF-IDF tertinggi) per klaster untuk menjaga kebersihan visual.")
+                    except Exception as e:
+                        st.error(f"Terjadi kesalahan saat merender plot: {e}")
 
         else:
             st.warning("Data tidak ditemukan untuk rentang tanggal tersebut.")
