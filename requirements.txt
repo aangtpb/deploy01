@@ -19,3 +19,5 @@ numpy
 nltk
 networkx
 gensim
+torchvision
+streamlit_option_menu
