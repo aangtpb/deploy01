@@ -236,8 +236,8 @@ elif page == "Analisis":
                 st.plotly_chart(fig_vol, use_container_width=True)
                 
                 # Preview Data Mentah
-                with st.expander("Lihat Data Mentah"):
-                     st.write(df.head(100))
+                with st.expander("Lihat Data Frame 100 Row Pertama"):
+                     st.write(df.head(100git))
 
             with tabs[1]:
                 st.header("Analisis Isu & Semantik")
