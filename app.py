@@ -237,7 +237,7 @@ elif page == "Analisis":
                 
                 # Preview Data Mentah
                 with st.expander("Lihat Data Frame 100 Row Pertama"):
-                     st.write(df.head(100git))
+                     st.write(df.head(100))
 
             with tabs[1]:
                 st.header("Analisis Isu & Semantik")
